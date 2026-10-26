@@ -1,0 +1,7 @@
+dist/
+.venv/
+__pycache__/
+*.pyc
+*.lock
+*.tar.gz
+*.zip

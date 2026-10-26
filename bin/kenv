@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# kenv - conda-like env manager on top of uv (pip/PyPI only)
+set -euo pipefail
+KENV_HOME="${KENV_HOME:-$HOME/.kenv}"; ENVS="$KENV_HOME/envs"; mkdir -p "$ENVS"
+die(){ echo "kenv: $*" >&2; exit 1; }
+envp(){ [[ -n "${1:-}" ]] || die "env name required"; echo "$ENVS/$1"; }
+need(){ [[ -x "$(envp "$1")/bin/python" ]] || die "env '$1' not found"; }
+pyver(){ "$(envp "$1")/bin/python" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])'; }
+# target env: -n NAME or currently active
+target(){ if [[ -n "${NAME:-}" ]]; then echo "$NAME"; elif [[ -n "${VIRTUAL_ENV:-}" && "$VIRTUAL_ENV" == "$ENVS"/* ]]; then basename "$VIRTUAL_ENV"; else die "no env: use -n NAME or activate one"; fi; }
+usage(){ cat <<U
+kenv create NAME [--python 3.x] [pkgs...]   create env (uv python install if needed)
+kenv activate NAME | deactivate              (needs: source kenv.sh)
+kenv list                                    list envs
+kenv install [-n NAME] pkgs...|-r file       uv pip install
+kenv uninstall [-n NAME] pkgs...             uv pip uninstall
+kenv freeze [-n NAME]                        list pinned packages
+kenv export [-n NAME] [-o FILE] [--lock]     requirements.txt (or hashed lock via uv pip compile)
+kenv import NAME FILE [--python 3.x]         create env from requirements/lock file (exact sync)
+kenv clone SRC DST                           clone env (same python, same pins)
+kenv kernel [-n NAME]                        register Jupyter kernel "kenv-NAME"
+kenv audit [-n NAME]                         pip-audit vulnerability scan
+kenv remove NAME                             delete env (+ its kernel)
+kenv python list|install VER                 manage python builds (uv)
+U
+}
+mk(){ # name ver
+  local p; p=$(envp "$1"); [[ -e "$p" ]] && die "env '$1' exists"
+  uv python install "$2" >/dev/null 2>&1 || true
+  uv venv -q "$p" --python "$2" --prompt "$1"
+}
+cmd="${1:-help}"; shift || true
+NAME=""; args=()
+while [[ $# -gt 0 ]]; do case "$1" in -n|--name) NAME="$2"; shift 2;; *) args+=("$1"); shift;; esac; done
+set -- "${args[@]+"${args[@]}"}"
+case "$cmd" in
+ create)
+  n="$1"; shift; ver="3.12"; pk=()
+  while [[ $# -gt 0 ]]; do case "$1" in --python|-p) ver="$2"; shift 2;; *) pk+=("$1"); shift;; esac; done
+  mk "$n" "$ver"; [[ ${#pk[@]} -gt 0 ]] && uv pip install -q --python "$(envp "$n")/bin/python" "${pk[@]}"
+  echo "created '$n' (Python $(pyver "$n")) -> $(envp "$n")";;
+ list|ls|env)
+  printf "%-20s %-10s %s\n" NAME PYTHON PATH
+  for d in "$ENVS"/*/; do [[ -x "$d/bin/python" ]] || continue; n=$(basename "$d")
+   m=" "; [[ "${VIRTUAL_ENV:-}" == "${d%/}" ]] && m="*"
+   printf "%-20s %-10s %s\n" "$m$n" "$(pyver "$n")" "${d%/}"; done;;
+ install|add)  t=$(target); need "$t"; uv pip install --python "$(envp "$t")/bin/python" "$@";;
+ uninstall|rm-pkg) t=$(target); need "$t"; uv pip uninstall --python "$(envp "$t")/bin/python" "$@";;
+ freeze) t=$(target); need "$t"; uv pip freeze --python "$(envp "$t")/bin/python";;
+ export)
+  t=$(target); need "$t"; out=""; lock=0
+  while [[ $# -gt 0 ]]; do case "$1" in -o) out="$2"; shift 2;; --lock) lock=1; shift;; *) shift;; esac; done
+  tmp=$(mktemp); { echo "# kenv-env: $t"; echo "# python: $(pyver "$t")"; } >"$tmp"
+  if [[ $lock = 1 ]]; then
+   uv pip freeze --python "$(envp "$t")/bin/python" > "$tmp.in"
+   uv pip compile -q "$tmp.in" --python-version "$(pyver "$t" | cut -d. -f1,2)" --generate-hashes --no-header >> "$tmp"; rm -f "$tmp.in"
+  else uv pip freeze --python "$(envp "$t")/bin/python" >> "$tmp"; fi
+  if [[ -n "$out" ]]; then mv "$tmp" "$out"; echo "exported '$t' -> $out"; else cat "$tmp"; rm -f "$tmp"; fi;;
+ import)
+  n="$1"; f="$2"; shift 2; ver=$(sed -n 's/^# python: //p' "$f" | head -1); ver="${ver:-3.12}"
+  [[ "${1:-}" == --python ]] && ver="$2"
+  mk "$n" "$ver"; uv pip sync -q --python "$(envp "$n")/bin/python" "$f"
+  echo "imported '$n' (Python $(pyver "$n")) from $f";;
+ clone)
+  need "$1"; tmp=$(mktemp); uv pip freeze --python "$(envp "$1")/bin/python" > "$tmp"
+  mk "$2" "$(pyver "$1")"; uv pip sync -q --python "$(envp "$2")/bin/python" "$tmp"; rm -f "$tmp"
+  echo "cloned '$1' -> '$2'";;
+ kernel)
+  t=$(target); need "$t"; py="$(envp "$t")/bin/python"
+  uv pip install -q --python "$py" ipykernel
+  "$py" -m ipykernel install --user --name "kenv-$t" --display-name "Python $(pyver "$t") (kenv: $t)";;
+ audit)
+  t=$(target); need "$t"; tmp=$(mktemp); uv pip freeze --python "$(envp "$t")/bin/python" > "$tmp"
+  rc=0; uvx -q pip-audit -r "$tmp" --no-deps --disable-pip --progress-spinner off || rc=$?; rm -f "$tmp"; exit $rc;;
+ remove|rm)
+  need "$1"; [[ "${VIRTUAL_ENV:-}" == "$(envp "$1")" ]] && die "deactivate first"
+  rm -rf "$(envp "$1")"; k="${XDG_DATA_HOME:-$HOME/.local/share}/jupyter/kernels/kenv-$1"; [[ -d "$k" ]] && rm -rf "$k"
+  echo "removed '$1'";;
+ python) uv python "$@";;
+ prefix) need "$1"; envp "$1";;
+ activate|deactivate) die "run 'source $(dirname "$(readlink -f "$0")")/../kenv.sh' first (shell function)";;
+ help|-h|--help) usage;;
+ *) usage; exit 1;;
+esac
