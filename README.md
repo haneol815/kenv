@@ -25,6 +25,7 @@ conda+pip 혼용으로 인한 의존성 꼬임 문제가 원천적으로 사라�
 tar xzf kenv-linux.tar.gz && cd kenv-linux
 ./install.sh                 # 사용자 설치: ~/.local/share/kenv, 환경은 ~/.kenv/envs, ~/.bashrc 자동 설정
 source ~/.bashrc && kenv list
+./install.sh --uninstall     # 제거 (환경은 보존). 재실행해도 중복 설정 없음
 ```
 연구실 공용 서버(공유 환경):
 ```bash
@@ -66,7 +67,7 @@ sudo usermod -aG kenv <사용자>        # kenv 그룹원은 공용 env 생성/�
 - Linux tarball: 빈 HOME에서 압축 해제 → `install.sh` → `create/activate/list/deactivate/remove` 정상
 - Linux `--system`: 테스트 사용자 2명이 /opt/kenv 공용 env를 생성·활성화·설치 공유 확인 (테스트 후 원복)
 - Windows 모듈: Linux의 PowerShell 7.4.6에서 전체 명령 시나리오 통과 (create 3.11/3.13, activate/deactivate, install, export/lock(해시 136)/import 동일 재현, clone, kernel, audit 24건 탐지·rc=1, remove 시 커널 삭제)
-- 실제 Windows 11에서 미검증: `install.ps1`(uv 설치, PATH/프로필/실행 정책), `kenv.cmd`, `Scripts\` 경로, Windows PowerShell 5.1 호환성, `%APPDATA%\jupyter` 커널 경로 → 문법 파싱만 확인
+- 실제 (v0.1.0 기준) Windows 11에서 미검증 → v0.1.1부터 GitHub Actions windows-latest에서 검증: `install.ps1`(uv 설치, PATH/프로필/실행 정책), `kenv.cmd`, `Scripts\` 경로, Windows PowerShell 5.1 호환성, `%APPDATA%\jupyter` 커널 경로 → 문법 파싱만 확인
 
 ## 한계 / 주의 (conda가 제공하던 비-Python 바이너리)
 | 항목 | pip 휠 현황 |
@@ -84,3 +85,9 @@ sudo usermod -aG kenv <사용자>        # kenv 그룹원은 공용 env 생성/�
 - `windows/` — kenv.psm1, install.ps1, uninstall.ps1, kenv.cmd
 - `install.sh` — Linux 설치기
 - `bin/kenv` — CLI 본체 / `kenv.sh` — activate·deactivate 셸 함수 / `README.md`
+
+## 테스트 / CI
+- `tests/test_linux.sh` (bash 38개 케이스), `tests/test_install.sh` (깨끗한 HOME 설치·재설치·제거)
+- `tests/test.ps1` (PowerShell 5.1/7, 37개 케이스), `tests/test_install_windows.ps1` (install.ps1·kenv.cmd·uninstall.ps1)
+- GitHub Actions: ubuntu-latest + windows-latest (실제 Windows에서 PowerShell 5.1/7, cmd.exe 검증)
+- 환경 이름 규칙: 영문/숫자/`. _ -`, `.`/`-`로 시작 불가. 생성·import·clone 실패 시 자동 롤백. `kenv audit`은 취약점 발견 시 exit 1.

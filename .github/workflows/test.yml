@@ -1,0 +1,42 @@
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: shellcheck
+        run: shellcheck bin/kenv kenv.sh install.sh tests/*.sh
+      - name: bash end-to-end
+        run: tests/test_linux.sh
+      - name: install.sh (clean HOME)
+        run: tests/test_install.sh
+      - name: PowerShell module on Linux (pwsh)
+        shell: pwsh
+        run: ./tests/test.ps1
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Force -Scope CurrentUser }
+          $r = @('windows','tests') | ForEach-Object { Invoke-ScriptAnalyzer -Path $_ -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost }
+          $r | Format-Table -AutoSize | Out-String -Width 200
+          if ($r) { exit 1 }
+      - name: tests on PowerShell 7
+        shell: pwsh
+        run: ./tests/test.ps1
+      - name: tests on Windows PowerShell 5.1
+        shell: powershell
+        run: ./tests/test.ps1
+      - name: install.ps1 / kenv.cmd / uninstall.ps1
+        shell: pwsh
+        run: ./tests/test_install_windows.ps1
